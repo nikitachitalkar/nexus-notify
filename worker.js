@@ -1,0 +1,104 @@
+const amqp = require('amqplib');
+const mongoose = require('mongoose');
+const nodemailer = require('nodemailer');
+const NotificationLog = require('./models/NotificationLog');
+
+const MAIN_QUEUE = 'notifications_v3_queue'; // V3 Topology
+const DLX_EXCHANGE = 'notification_dlx_v3';
+const RETRY_QUEUE = 'retry_queue_v3';
+
+// 1. Database Connection
+mongoose.connect('mongodb://localhost:27017/nexus_db')
+  .then(() => console.log('📦 Worker Connected to MongoDB!'))
+  .catch((err) => console.error('❌ Worker DB Connection Error:', err));
+
+// 2. Nodemailer Transporter Configuration
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: 'chitalkarnikita9@gmail.com', // 👈 Your Sender Account
+        pass: 'altt oryu zyqp bwgz'         // 👈 Your 16-character App Password
+    }
+});
+
+async function startWorker() {
+    try {
+        const connection = await amqp.connect('amqp://127.0.0.1:5672');
+        const channel = await connection.createChannel();
+        
+        // Match the exact topology parameters from app.js to prevent 406 errors
+        await channel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
+        await channel.assertQueue(MAIN_QUEUE, {
+            durable: true,
+            arguments: {
+                'x-dead-letter-exchange': DLX_EXCHANGE,
+                'x-dead-letter-routing-key': RETRY_QUEUE
+            }
+        });
+        
+        console.log('Worker is active and listening for messages...');
+
+        // 3. Process Messages From The Queue
+        channel.consume(MAIN_QUEUE, async (msg) => {
+            if (msg !== null) {
+                const messageContent = JSON.parse(msg.content.toString());
+                console.log(`\n📥 Received message for processing:`, messageContent);
+
+                const { logId, userId, channel: msgChannel, templateType } = messageContent;
+
+                try {
+                    // 🔥 TESTING LINE: To see the 5-second automatic retry loop working live, 
+                    // uncomment the line below. Leave it commented out for successful delivery.
+                    // throw new Error("SMTP Network Timeout Gateway Glitch!");
+
+                    if (msgChannel === 'EMAIL') {
+                        console.log(`📧 Dispatching email to ${userId}...`);
+
+                        const mailOptions = {
+                            from: 'chitalkarnikita9@gmail.com',     // 👈 From your 1st email
+                            to: 'nikitachitalkar29@gmail.com',       // 👈 Direct to your 2nd email
+                            subject: `NexusNotify - ${templateType}`,
+                            text: `Hello ${userId},\n\nYour notification for ${templateType} has been processed successfully via Nexus System Design!\n\nBest Regards,\nNikita`
+                        };
+
+                        const info = await transporter.sendMail(mailOptions);
+                        console.log('✨ Email sent successfully! MessageId:', info.messageId);
+                    }
+
+                    // On absolute success, update log and acknowledge message
+                    await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
+                    console.log(`✅ Successfully processed ${templateType}. DB Status Updated.`);
+                    channel.ack(msg);
+
+                } catch (error) {
+                    console.error(`❌ Processing Error: ${error.message}`);
+
+                    // 4. Inspect RabbitMQ "x-death" headers to extract the current retry count
+                    const deathHeader = msg.properties.headers && msg.properties.headers['x-death'];
+                    const retryCount = deathHeader ? deathHeader[0].count : 0;
+
+                    console.log(`⚠️ Current Retry Count: ${retryCount}`);
+
+                    if (retryCount < 3) {
+                        console.log(`🔄 Under retry limit. Dropping to Retry Queue for a 5-second cooldown...`);
+                        channel.nack(msg, false, false); 
+                    } else {
+                        console.log(`🚫 Max retries reached. Marking message as permanently FAILED in DB.`);
+                        
+                        await NotificationLog.findByIdAndUpdate(logId, {
+                            status: 'FAILED',
+                            errorMessage: `Max retries exhausted. Original error: ${error.message}`
+                        });
+                        
+                        channel.ack(msg); 
+                    }
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Worker RabbitMQ Error:', error);
+    }
+}
+
+startWorker();
