@@ -4,9 +4,19 @@ const amqp = require('amqplib');
 const { createClient } = require('redis');
 const { rateLimit } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
+// 💥 1. CORS Package ko import kiya
+const cors = require('cors'); 
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
+
+// 💥 2. CORS Middleware yahan config kiya (Taaki localhost:5173 block na ho)
+app.use(cors({
+    origin: 'http://localhost:5173', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
+}));
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000; 
@@ -85,7 +95,6 @@ async function initRabbitMQ() {
         console.log('✅ RabbitMQ Topologies Initialized!');
     } catch (error) {
         console.error(`⚠️ RabbitMQ Setup Bypassed cleanly: ${error.message}`);
-        // Yahan error throw nahi hoga, taaki server chalta rahe
     }
 }
 
@@ -136,19 +145,16 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
 
 // 6. Resilient Server Bootup Sequence (Guarantees Instant Port Binding)
 async function startServer() {
-    // 🔥 Sabse pehle server ko port par listen karwao taaki Render instantly LIVE kar de!
     app.listen(PORT, () => {
         console.log(`🚀 Resilient Server successfully running on port ${PORT}`);
     });
 
-    // 🌲 Redis aur RabbitMQ connections background mein chalte rahenge cleanly
     console.log('⏳ Initiating background service handshakes...');
     
     redisClient.connect()
         .then(() => console.log('✅ Redis Connected Successfully!'))
         .catch((redisError) => console.error('⚠️ Redis bypassed. Tracking memory locally:', redisError.message));
 
-    // Ab bina crash ke background mein trigger hoga
     initRabbitMQ();
 }
 
