@@ -56,32 +56,37 @@ mongoose.connect(MONGO_URI, {
   .then(() => console.log('✅ MongoDB Connected Successfully!'))
   .catch((err) => console.error('⚠️ MongoDB bypass kiya (Cloud URL missing):', err.message));
 
-// 4. Connect to RabbitMQ with clean errors
+// 4. Connect to RabbitMQ with structural try/catch to prevent crashes
 async function initRabbitMQ() {
     const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
     
-    console.log(`⏳ Connecting to RabbitMQ...`);
-    const connection = await amqp.connect(RABBITMQ_URL); 
-    rabbitChannel = await connection.createChannel();
+    try {
+        console.log(`⏳ Connecting to RabbitMQ...`);
+        const connection = await amqp.connect(RABBITMQ_URL); 
+        rabbitChannel = await connection.createChannel();
 
-    await rabbitChannel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
-    await rabbitChannel.assertQueue(RETRY_QUEUE, {
-        durable: true,
-        arguments: {
-            'x-dead-letter-exchange': '',
-            'x-dead-letter-routing-key': MAIN_QUEUE,
-            'x-message-ttl': 5000
-        }
-    });
-    await rabbitChannel.assertQueue(MAIN_QUEUE, {
-        durable: true,
-        arguments: {
-            'x-dead-letter-exchange': DLX_EXCHANGE,
-            'x-dead-letter-routing-key': RETRY_QUEUE
-        }
-    });
-    await rabbitChannel.bindQueue(RETRY_QUEUE, DLX_EXCHANGE, RETRY_QUEUE);
-    console.log('✅ RabbitMQ Topologies Initialized!');
+        await rabbitChannel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
+        await rabbitChannel.assertQueue(RETRY_QUEUE, {
+            durable: true,
+            arguments: {
+                'x-dead-letter-exchange': '',
+                'x-dead-letter-routing-key': MAIN_QUEUE,
+                'x-message-ttl': 5000
+            }
+        });
+        await rabbitChannel.assertQueue(MAIN_QUEUE, {
+            durable: true,
+            arguments: {
+                'x-dead-letter-exchange': DLX_EXCHANGE,
+                'x-dead-letter-routing-key': RETRY_QUEUE
+            }
+        });
+        await rabbitChannel.bindQueue(RETRY_QUEUE, DLX_EXCHANGE, RETRY_QUEUE);
+        console.log('✅ RabbitMQ Topologies Initialized!');
+    } catch (error) {
+        console.error(`⚠️ RabbitMQ Setup Bypassed cleanly: ${error.message}`);
+        // Yahan error throw nahi hoga, taaki server chalta rahe
+    }
 }
 
 // 5. Dummy Route for Render Health Check
@@ -129,7 +134,6 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     }
 });
 
-// 6. Reliable Server Bootup Sequence (No block for Render Deployment)
 // 6. Resilient Server Bootup Sequence (Guarantees Instant Port Binding)
 async function startServer() {
     // 🔥 Sabse pehle server ko port par listen karwao taaki Render instantly LIVE kar de!
@@ -144,8 +148,8 @@ async function startServer() {
         .then(() => console.log('✅ Redis Connected Successfully!'))
         .catch((redisError) => console.error('⚠️ Redis bypassed. Tracking memory locally:', redisError.message));
 
-    initRabbitMQ()
-        .catch((mqError) => console.error('⚠️ RabbitMQ connection bypassed.'));
+    // Ab bina crash ke background mein trigger hoga
+    initRabbitMQ();
 }
 
 startServer();
