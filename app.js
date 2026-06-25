@@ -9,7 +9,7 @@ const NotificationLog = require('./models/NotificationLog');
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 let rabbitChannel = null;
 
 // Constants for Advanced Resilient Topology
@@ -17,8 +17,10 @@ const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 const MAIN_QUEUE = 'notifications_v3_queue';
 
-// 1. Initialize Redis Client Instance
-const redisClient = createClient({ url: 'redis://127.0.0.1:6379' });
+// 1. Initialize Redis Client Instance with cloud fallback URL
+const redisClient = createClient({ 
+    url: process.env.REDIS_URL || 'redis://127.0.0.1:6379' 
+});
 redisClient.on('error', (err) => console.error('❌ Redis Client Error:', err));
 
 // 2. Define Rate Limiting Rule cleanly
@@ -29,11 +31,16 @@ const apiLimiter = rateLimit({
     legacyHeaders: false, 
     store: new RedisStore({
         sendCommand: async (...args) => {
-            // Defensive check: if redis isn't ready yet, wait briefly or handle gracefully
+            // Defensive check: if redis isn't ready or connected, gracefully bypass to prevent app crash
             if (!redisClient.isOpen) {
                 return 0; 
             }
-            return redisClient.sendCommand(args);
+            try {
+                return await redisClient.sendCommand(args);
+            } catch (err) {
+                console.error('⚠️ Rate limit redis store command failed:', err.message);
+                return 0;
+            }
         },
     }),
     handler: (req, res) => {
@@ -44,18 +51,20 @@ const apiLimiter = rateLimit({
     }
 });
 
-// 3. Connect to MongoDB
-mongoose.connect('mongodb://localhost:27017/nexus_db')
+// 3. Connect to MongoDB using environment variable
+const mongoURI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexus_db';
+mongoose.connect(mongoURI)
   .then(() => console.log('✅ MongoDB Connected Successfully!'))
   .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
 // 4. Connect to RabbitMQ with automatic retry if it's warming up
 async function initRabbitMQ() {
+    const rabbitURL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
     const maxRetries = 3;
     for (let i = 1; i <= maxRetries; i++) {
         try {
             console.log(`⏳ Connecting to RabbitMQ (Attempt ${i}/${maxRetries})...`);
-            const connection = await amqp.connect('amqp://127.0.0.1:5672'); 
+            const connection = await amqp.connect(rabbitURL); 
             rabbitChannel = await connection.createChannel();
 
             await rabbitChannel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
@@ -128,14 +137,17 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
 });
 
 // 6. Sequential, Reliable Server Bootup Sequence
-// 6. Sequential, Reliable Server Bootup Sequence
 async function startServer() {
     try {
         console.log('⏳ Connecting to Redis...');
-        await redisClient.connect();
-        console.log('✅ Redis Connected Successfully for Rate Limiting!');
+        try {
+            await redisClient.connect();
+            console.log('✅ Redis Connected Successfully for Rate Limiting!');
+        } catch (redisError) {
+            console.error('⚠️ Redis connection failed. Bypassing rate-limiter store to avoid crash:', redisError.message);
+        }
 
-        // Humne isko try-catch mein daal diya taaki error aaye toh bhi server na ruke!
+        // RabbitMQ implementation in try-catch to allow independent execution flow
         try {
             await initRabbitMQ();
         } catch (mqError) {
@@ -150,3 +162,5 @@ async function startServer() {
         process.exit(1);
     }
 }
+
+startServer();
