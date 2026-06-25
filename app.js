@@ -130,25 +130,22 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
 });
 
 // 6. Reliable Server Bootup Sequence (No block for Render Deployment)
+// 6. Resilient Server Bootup Sequence (Guarantees Instant Port Binding)
 async function startServer() {
-    console.log('⏳ Trying to connect to Redis...');
-    try {
-        await redisClient.connect();
-        console.log('✅ Redis Connected Successfully!');
-    } catch (redisError) {
-        console.error('⚠️ Redis bypassed. Application running cleanly on local memory rate-limiting.');
-    }
-
-    try {
-        await initRabbitMQ();
-    } catch (mqError) {
-        console.error('⚠️ RabbitMQ connection bypassed.');
-    }
-
-    // Server port binding will always execute successfully now
+    // 🔥 Sabse pehle server ko port par listen karwao taaki Render instantly LIVE kar de!
     app.listen(PORT, () => {
         console.log(`🚀 Resilient Server successfully running on port ${PORT}`);
     });
+
+    // 🌲 Redis aur RabbitMQ connections background mein chalte rahenge cleanly
+    console.log('⏳ Initiating background service handshakes...');
+    
+    redisClient.connect()
+        .then(() => console.log('✅ Redis Connected Successfully!'))
+        .catch((redisError) => console.error('⚠️ Redis bypassed. Tracking memory locally:', redisError.message));
+
+    initRabbitMQ()
+        .catch((mqError) => console.error('⚠️ RabbitMQ connection bypassed.'));
 }
 
 startServer();
