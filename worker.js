@@ -7,8 +7,9 @@ const MAIN_QUEUE = 'notifications_v3_queue'; // V3 Topology
 const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 
-// 1. Database Connection
-mongoose.connect('mongodb://localhost:27017/nexus_db')
+// 1. Database Connection (Cloud MongoDB URL Support)
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
+mongoose.connect(MONGO_URI)
   .then(() => console.log('📦 Worker Connected to MongoDB!'))
   .catch((err) => console.error('❌ Worker DB Connection Error:', err));
 
@@ -23,7 +24,9 @@ const transporter = nodemailer.createTransport({
 
 async function startWorker() {
     try {
-        const connection = await amqp.connect('amqp://127.0.0.1:5672');
+        // Cloud RabbitMQ Connection Support
+        const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
+        const connection = await amqp.connect(RABBITMQ_URL);
         const channel = await connection.createChannel();
         
         // Match the exact topology parameters from app.js to prevent 406 errors
@@ -47,10 +50,6 @@ async function startWorker() {
                 const { logId, userId, channel: msgChannel, templateType } = messageContent;
 
                 try {
-                    // 🔥 TESTING LINE: To see the 5-second automatic retry loop working live, 
-                    // uncomment the line below. Leave it commented out for successful delivery.
-                    // throw new Error("SMTP Network Timeout Gateway Glitch!");
-
                     if (msgChannel === 'EMAIL') {
                         console.log(`📧 Dispatching email to ${userId}...`);
 
