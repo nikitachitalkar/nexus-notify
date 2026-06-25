@@ -128,21 +128,25 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
 });
 
 // 6. Sequential, Reliable Server Bootup Sequence
+// 6. Sequential, Reliable Server Bootup Sequence
 async function startServer() {
     try {
         console.log('⏳ Connecting to Redis...');
         await redisClient.connect();
         console.log('✅ Redis Connected Successfully for Rate Limiting!');
 
-        await initRabbitMQ();
+        // Humne isko try-catch mein daal diya taaki error aaye toh bhi server na ruke!
+        try {
+            await initRabbitMQ();
+        } catch (mqError) {
+            console.error('⚠️ RabbitMQ bypass kiya (Cloud setup missing):', mqError.message);
+        }
 
         app.listen(PORT, () => {
-            console.log(`🚀 Resilient Server running on http://localhost:${PORT}`);
+            console.log(`🚀 Resilient Server running on port ${PORT}`);
         });
     } catch (error) {
         console.error('❌ Critical Server Startup Failure:', error.message);
         process.exit(1);
     }
 }
-
-startServer();
