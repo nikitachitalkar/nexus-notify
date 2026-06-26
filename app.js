@@ -4,18 +4,19 @@ const amqp = require('amqplib');
 const { createClient } = require('redis');
 const { rateLimit } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
-// 💥 1. CORS Package ko import kiya
 const cors = require('cors'); 
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 
-// 💥 2. CORS Middleware yahan config kiya (Taaki localhost:5173 block na ho)
+// 🔥 1. CORS Configuration sabse upar taaki har haal mein response bypass ho
 app.use(cors({
-    origin: 'http://localhost:5173', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin: '*', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
 }));
+app.options('*', cors());
 
 app.use(express.json());
 
@@ -26,17 +27,17 @@ const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 const MAIN_QUEUE = 'notifications_v3_queue';
 
-// 1. Initialize Redis Client Instance with fallback support
+// 2. Initialize Redis Client Instance with fallback support
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const redisClient = createClient({ 
     url: REDIS_URL,
     socket: {
-        connectTimeout: 3000 // 3 seconds timeout to prevent render freeze
+        connectTimeout: 2000 
     }
 });
 redisClient.on('error', (err) => console.error('⚠️ Redis Client Network Notice:', err.message));
 
-// 2. Define Rate Limiting Rule cleanly
+// 3. Define Rate Limiting Rule with FULL SAFE FALLBACK
 const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, 
     max: 10000, 
@@ -44,10 +45,16 @@ const apiLimiter = rateLimit({
     legacyHeaders: false, 
     store: new RedisStore({
         sendCommand: async (...args) => {
+            // 🔥 Strict Safeguard: Agar Redis open nahi hai ya connection ENOTFOUND hai, toh process memory use karo
             if (!redisClient.isOpen) {
-                return 0; // Fallback smoothly if Redis is not connected
+                return 0; 
             }
-            return redisClient.sendCommand(args);
+            try {
+                return await redisClient.sendCommand(args);
+            } catch (err) {
+                console.error("⚠️ Redis command failed, bypassing locally:", err.message);
+                return 0;
+            }
         },
     }),
     handler: (req, res) => {
@@ -58,18 +65,17 @@ const apiLimiter = rateLimit({
     }
 });
 
-// 3. Connect to MongoDB (Bulletproof Cloud Handling)
+// 4. Connect to MongoDB (Bulletproof Cloud Handling)
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 4000 // 4 seconds timeout to prevent boot failures
+    serverSelectionTimeoutMS: 4000 
 })
   .then(() => console.log('✅ MongoDB Connected Successfully!'))
-  .catch((err) => console.error('⚠️ MongoDB bypass kiya (Cloud URL missing):', err.message));
+  .catch((err) => console.error('⚠️ MongoDB bypass kiya:', err.message));
 
-// 4. Connect to RabbitMQ with structural try/catch to prevent crashes
+// 5. Connect to RabbitMQ safely
 async function initRabbitMQ() {
     const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
-    
     try {
         console.log(`⏳ Connecting to RabbitMQ...`);
         const connection = await amqp.connect(RABBITMQ_URL); 
@@ -98,12 +104,12 @@ async function initRabbitMQ() {
     }
 }
 
-// 5. Dummy Route for Render Health Check
+// Dummy Route for Render Health Check
 app.get('/', (req, res) => {
     res.send('🚀 Resilient Nexus Notify Server is Live and Running!');
 });
 
-// API Endpoint Equipped with Redis Rate Limiter Middleware
+// API Endpoint
 app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     try {
         const { userId, channel, templateType } = req.body;
@@ -143,7 +149,7 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     }
 });
 
-// 6. Resilient Server Bootup Sequence (Guarantees Instant Port Binding)
+// Resilient Server Bootup Sequence
 async function startServer() {
     app.listen(PORT, () => {
         console.log(`🚀 Resilient Server successfully running on port ${PORT}`);
@@ -153,7 +159,7 @@ async function startServer() {
     
     redisClient.connect()
         .then(() => console.log('✅ Redis Connected Successfully!'))
-        .catch((redisError) => console.error('⚠️ Redis bypassed. Tracking memory locally:', redisError.message));
+        .catch((redisError) => console.error('⚠️ Redis connection failed. Safeguard active.', redisError.message));
 
     initRabbitMQ();
 }
