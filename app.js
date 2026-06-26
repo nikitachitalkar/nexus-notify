@@ -8,14 +8,13 @@ const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 
-// 🚀 1. CORS Headers globally enable kiye (Wildcard routing ke sath)
+// 🚀 1. CORS Headers globally enable kiye (Automatically handles Pre-flight OPTIONS)
 app.use(cors({
     origin: '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
 }));
-app.options('*', cors());
 
 app.use(express.json());
 
@@ -79,7 +78,7 @@ async function initRabbitMQ() {
     }
 }
 
-// Dummy Route for Render Health Check
+// Dummy Route for Render Health Check - Fix for Express v5 Wildcard Engine
 app.get('/', (req, res) => {
     res.send('🚀 Resilient Nexus Notify Server is Live and Running!');
 });
