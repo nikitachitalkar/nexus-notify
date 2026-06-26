@@ -131,7 +131,15 @@ async function startServer() {
     });
     
     // RabbitMQ initialization safely in separate execution thread
-    initRabbitMQ();
+    await initRabbitMQ();
+
+    // 🔥 SMART HACK: Trigger worker logic internally inside the same Free Instance process!
+    try {
+        console.log('🔄 Booting background worker processor threads internally...');
+        require('./worker.js');
+    } catch (workerInitError) {
+        console.error('⚠️ Monolithic Worker bootup failed:', workerInitError.message);
+    }
 }
 
 startServer();
