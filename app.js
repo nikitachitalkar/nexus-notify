@@ -3,13 +3,12 @@ const mongoose = require('mongoose');
 const amqp = require('amqplib');
 const { createClient } = require('redis');
 const { rateLimit } = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis');
 const cors = require('cors'); 
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 
-// 1. CORS Configuration Configuration at the top
+// 🚀 1. CORS Headers globally enable kiye (Wildcard routing ke sath)
 app.use(cors({
     origin: '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -27,36 +26,12 @@ const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 const MAIN_QUEUE = 'notifications_v3_queue';
 
-// 2. Initialize Redis Client Instance safely
-const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
-const redisClient = createClient({ 
-    url: REDIS_URL,
-    socket: {
-        connectTimeout: 5000 
-    }
-});
-redisClient.on('error', (err) => console.error('⚠️ Redis Client Notice:', err.message));
-
-// 3. Define Rate Limiting Rule with Bulletproof Native Memory Fallback
-let rateLimiterStore;
-try {
-    rateLimiterStore = new RedisStore({
-        sendCommand: async (...args) => {
-            if (!redisClient.isReady) return 0; // Safe runtime check
-            return redisClient.sendCommand(args);
-        },
-    });
-} catch (e) {
-    console.log("⚠️ Bypassing Redis store initialization, falling back to process memory.");
-    rateLimiterStore = undefined; // Automatically falls back to standard memory-store
-}
-
+// 2. Safe Localized Memory-Based Rate Limiter (No External Database Dependency to Crash)
 const apiLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, 
+    windowMs: 1 * 60 * 1000, // 1 minute
     max: 10000, 
     standardHeaders: true, 
-    legacyHeaders: false, 
-    store: rateLimiterStore,
+    legacyHeaders: false,
     handler: (req, res) => {
         res.status(429).json({
             error: 'Too Many Requests',
@@ -65,15 +40,15 @@ const apiLimiter = rateLimit({
     }
 });
 
-// 4. Connect to MongoDB (Bulletproof Cloud Handling)
+// 3. Connect to MongoDB (Bulletproof Timeout Config)
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI, {
     serverSelectionTimeoutMS: 4000 
 })
   .then(() => console.log('✅ MongoDB Connected Successfully!'))
-  .catch((err) => console.error('⚠️ MongoDB bypass kiya:', err.message));
+  .catch((err) => console.error('⚠️ MongoDB bypass kiya (Cloud Connection Offline):', err.message));
 
-// 5. Connect to RabbitMQ safely
+// 4. Connect to RabbitMQ Safely
 async function initRabbitMQ() {
     const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
     try {
@@ -109,7 +84,7 @@ app.get('/', (req, res) => {
     res.send('🚀 Resilient Nexus Notify Server is Live and Running!');
 });
 
-// API Endpoint
+// 5. Main POST API Endpoint
 app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     try {
         const { userId, channel, templateType } = req.body;
@@ -118,6 +93,7 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Missing mandatory fields' });
         }
 
+        // Production isolated handling: Database connection missing rule
         if (mongoose.connection.readyState !== 1) {
             return res.status(503).json({ error: 'Database service is currently unavailable offline.' });
         }
@@ -149,19 +125,13 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     }
 });
 
-// Resilient Server Bootup Sequence
+// Server Boot Sequence
 async function startServer() {
     app.listen(PORT, () => {
         console.log(`🚀 Resilient Server successfully running on port ${PORT}`);
     });
-
-    console.log('⏳ Initiating background service handshakes...');
     
-    // Connect to Redis in background without interrupting boot
-    redisClient.connect()
-        .then(() => console.log('✅ Redis Connected Successfully!'))
-        .catch((redisError) => console.error('⚠️ Redis connection failed. Local tracking fallback active.', redisError.message));
-
+    // RabbitMQ initialization safely in separate execution thread
     initRabbitMQ();
 }
 
