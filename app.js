@@ -9,7 +9,7 @@ const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 
-// 🔥 1. CORS Configuration sabse upar taaki har haal mein response bypass ho
+// 1. CORS Configuration Configuration at the top
 app.use(cors({
     origin: '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -27,36 +27,36 @@ const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 const MAIN_QUEUE = 'notifications_v3_queue';
 
-// 2. Initialize Redis Client Instance with fallback support
+// 2. Initialize Redis Client Instance safely
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 const redisClient = createClient({ 
     url: REDIS_URL,
     socket: {
-        connectTimeout: 2000 
+        connectTimeout: 5000 
     }
 });
-redisClient.on('error', (err) => console.error('⚠️ Redis Client Network Notice:', err.message));
+redisClient.on('error', (err) => console.error('⚠️ Redis Client Notice:', err.message));
 
-// 3. Define Rate Limiting Rule with FULL SAFE FALLBACK
+// 3. Define Rate Limiting Rule with Bulletproof Native Memory Fallback
+let rateLimiterStore;
+try {
+    rateLimiterStore = new RedisStore({
+        sendCommand: async (...args) => {
+            if (!redisClient.isReady) return 0; // Safe runtime check
+            return redisClient.sendCommand(args);
+        },
+    });
+} catch (e) {
+    console.log("⚠️ Bypassing Redis store initialization, falling back to process memory.");
+    rateLimiterStore = undefined; // Automatically falls back to standard memory-store
+}
+
 const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, 
     max: 10000, 
     standardHeaders: true, 
     legacyHeaders: false, 
-    store: new RedisStore({
-        sendCommand: async (...args) => {
-            // 🔥 Strict Safeguard: Agar Redis open nahi hai ya connection ENOTFOUND hai, toh process memory use karo
-            if (!redisClient.isOpen) {
-                return 0; 
-            }
-            try {
-                return await redisClient.sendCommand(args);
-            } catch (err) {
-                console.error("⚠️ Redis command failed, bypassing locally:", err.message);
-                return 0;
-            }
-        },
-    }),
+    store: rateLimiterStore,
     handler: (req, res) => {
         res.status(429).json({
             error: 'Too Many Requests',
@@ -157,9 +157,10 @@ async function startServer() {
 
     console.log('⏳ Initiating background service handshakes...');
     
+    // Connect to Redis in background without interrupting boot
     redisClient.connect()
         .then(() => console.log('✅ Redis Connected Successfully!'))
-        .catch((redisError) => console.error('⚠️ Redis connection failed. Safeguard active.', redisError.message));
+        .catch((redisError) => console.error('⚠️ Redis connection failed. Local tracking fallback active.', redisError.message));
 
     initRabbitMQ();
 }
