@@ -7,7 +7,7 @@ const MAIN_QUEUE = 'notifications_v3_queue';
 const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 
-// 1. Database Connection (Cloud MongoDB URL Support with Fallback)
+// 1. Database Connection (Cloud MongoDB URL Support)
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI)
   .then(() => console.log('📦 Worker Connected to MongoDB!'))
@@ -18,17 +18,20 @@ const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: 'chitalkarnikita9@gmail.com', 
-        pass: 'vsie trhr fffo dpmo'         
+        pass: 'vsie trhr fffo dpmo' // Verfied Gmail App Password        
     }
 });
 
 async function startWorker() {
     try {
-        const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
+        // 🔥 Live Verified CloudAMQP Broker Connection URL
+        const RABBITMQ_URL = 'amqps://azteeckf:I9UvXzG1LH83FZG-aD51_OCxgRupLvTJ@seal.lmq.cloudamqp.com/azteeckf';
+        
+        console.log('⏳ Connecting local worker to CloudAMQP Broker...');
         const connection = await amqp.connect(RABBITMQ_URL);
         const channel = await connection.createChannel();
         
-        // Match the exact topology parameters from app.js to prevent 406 errors
+        // Asserting exact same topology configurations
         await channel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
         await channel.assertQueue(MAIN_QUEUE, {
             durable: true,
@@ -38,9 +41,8 @@ async function startWorker() {
             }
         });
         
-        // Prefetch limit taaki load distributed rahe
         channel.prefetch(1);
-        console.log('🚀 Worker is active and listening for messages...');
+        console.log('🚀 Worker is active and listening directly to CloudAMQP!');
 
         // 3. Process Messages From The Queue
         channel.consume(MAIN_QUEUE, async (msg) => {
@@ -51,7 +53,6 @@ async function startWorker() {
                 const { logId, userId, channel: msgChannel, templateType } = messageContent;
 
                 try {
-                    // Safe Case Check: String case change handle karne ke liye (.toUpperCase())
                     if (msgChannel && msgChannel.toUpperCase() === 'EMAIL') {
                         console.log(`📧 Dispatching email to ${userId}...`);
 
@@ -68,15 +69,18 @@ async function startWorker() {
                         console.log(`ℹ️ Task received for non-email channel [${msgChannel}], logging success internally.`);
                     }
 
-                    // On absolute success, update log and acknowledge message
-                    await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
-                    console.log(`✅ Successfully processed ${templateType}. DB Status Updated.`);
+                    // Acknowledge message on absolute success
+                    try {
+                        await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
+                        console.log(`✅ Successfully processed ${templateType}. DB Status Updated.`);
+                    } catch (dbErr) {
+                        console.log(`⚠️ DB Log update bypassed: ${dbErr.message}`);
+                    }
                     channel.ack(msg);
 
                 } catch (error) {
-                    console.error(`❌ Processing Error: ${error.message}`);
+                    console.error(`❌ Processing Error inside Nodemailer: ${error.message}`);
 
-                    // 4. Inspect RabbitMQ "x-death" headers to extract the current retry count
                     const deathHeader = msg.properties.headers && msg.properties.headers['x-death'];
                     const retryCount = deathHeader ? deathHeader[0].count : 0;
 
@@ -86,13 +90,13 @@ async function startWorker() {
                         console.log(`🔄 Under retry limit. Dropping to Retry Queue for a 5-second cooldown...`);
                         channel.nack(msg, false, false); 
                     } else {
-                        console.log(`🚫 Max retries reached. Marking message as permanently FAILED in DB.`);
-                        
-                        await NotificationLog.findByIdAndUpdate(logId, {
-                            status: 'FAILED',
-                            errorMessage: `Max retries exhausted. Original error: ${error.message}`
-                        });
-                        
+                        console.log(`🚫 Max retries reached. Marking message as FAILED.`);
+                        try {
+                            await NotificationLog.findByIdAndUpdate(logId, {
+                                status: 'FAILED',
+                                errorMessage: `Max retries exhausted. Original error: ${error.message}`
+                            });
+                        } catch (dbErr) {}
                         channel.ack(msg); 
                     }
                 }
@@ -100,7 +104,7 @@ async function startWorker() {
         });
 
     } catch (error) {
-        console.error('❌ Worker RabbitMQ Error:', error);
+        console.error('❌ Worker RabbitMQ Connection Error:', error.message);
     }
 }
 
