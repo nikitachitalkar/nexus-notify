@@ -1,37 +1,45 @@
+require('dotenv').config();
+const express = require('express'); // Render stability ke liye zaroori hai
 const amqp = require('amqplib');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const NotificationLog = require('./models/NotificationLog');
 
+// Dummy HTTP Server setup taaki Render port crash error na de
+const app = express();
+const PORT = process.env.PORT || 10000;
+app.get('/', (req, res) => res.send('Distributed Worker Engine running seamlessly...'));
+app.listen(PORT, () => console.log(`Worker monitoring system active on port ${PORT}`));
+
 const MAIN_QUEUE = 'notifications_v3_queue'; 
 const DLX_EXCHANGE = 'notification_dlx_v3';
 const RETRY_QUEUE = 'retry_queue_v3';
 
-// 1. Database Connection (Cloud MongoDB URL Support)
+// 1. Database Connection (Secured using environment variable)
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI)
   .then(() => console.log('📦 Worker Connected to MongoDB!'))
   .catch((err) => console.error('❌ Worker DB Connection Error:', err));
 
-// 2. Nodemailer Transporter Configuration
+// 2. Nodemailer Transporter Configuration (Ab credentials environment variables mein hain)
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: 'chitalkarnikita9@gmail.com', 
-        pass: 'vsie trhr fffo dpmo' // Verfied Gmail App Password        
+        user: process.env.EMAIL_USER, 
+        pass: process.env.EMAIL_PASS       
     }
 });
 
 async function startWorker() {
     try {
-        // 🔥 Live Verified CloudAMQP Broker Connection URL
-        const RABBITMQ_URL = 'amqps://azteeckf:I9UvXzG1LH83FZG-aD51_OCxgRupLvTJ@seal.lmq.cloudamqp.com/azteeckf';
+        // 🔥 Live CloudAMQP Broker Connection URL (Secured via process.env)
+        const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
         
-        console.log('⏳ Connecting local worker to CloudAMQP Broker...');
+        console.log('⏳ Connecting distributed worker to CloudAMQP Broker...');
         const connection = await amqp.connect(RABBITMQ_URL);
         const channel = await connection.createChannel();
         
-        // Asserting exact same topology configurations
+        // Asserting exact topology configurations (DLX Architecture intact)
         await channel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
         await channel.assertQueue(MAIN_QUEUE, {
             durable: true,
@@ -56,9 +64,12 @@ async function startWorker() {
                     if (msgChannel && msgChannel.toUpperCase() === 'EMAIL') {
                         console.log(`📧 Dispatching email to ${userId}...`);
 
+                        // Dynamic Recipient Email routing fallback setup
+                        const recipientEmail = messageContent.email || 'nikitachitalkar29@gmail.com';
+
                         const mailOptions = {
-                            from: 'chitalkarnikita9@gmail.com',     
-                            to: 'nikitachitalkar29@gmail.com',       
+                            from: process.env.EMAIL_USER,     
+                            to: recipientEmail,       
                             subject: `NexusNotify - ${templateType}`,
                             text: `Hello ${userId},\n\nYour notification for ${templateType} has been processed successfully via Nexus Distributed System Design!\n\nBest Regards,\nNikita`
                         };
