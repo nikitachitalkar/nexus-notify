@@ -11,7 +11,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [responseStatus, setResponseStatus] = useState(null);
 
-  // 🚀 Localhost First, with Production Render Fallback
+  // Localhost First, with Production Render Fallback
   const BACKEND_URL = process.env.NODE_ENV === 'production'
     ? "https://nexus-notify.onrender.com/api/v1/notifications/send"
     : "http://localhost:5000/api/v1/notifications/send";
@@ -187,7 +187,7 @@ function App() {
             border: responseStatus.success ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)',
           }}>
             <p style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: responseStatus.success ? '#22c55e' : '#ef4444' }}>
-              {responseStatus.success ? '💥 Request Accepted' : '❌ Pipeline Status'}
+              {responseStatus.success ? ' Request Accepted' : 'Pipeline Status'}
             </p>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#e4e4e7', fontWeight: '500' }}>
               {responseStatus.message}

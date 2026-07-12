@@ -12,8 +12,8 @@ const DLQ_FINAL = 'dead_letter_queue_v5';
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexus_db';
 if (mongoose.connection.readyState === 0) {
     mongoose.connect(MONGO_URI)
-      .then(() => console.log('📦 Worker Connected to MongoDB!'))
-      .catch(() => console.log('ℹ️ Worker running in DB-bypass mode'));
+      .then(() => console.log('[INFO] Worker connected to MongoDB database.'))
+      .catch(() => console.log('[WARN] Worker running in DB-bypass mode.'));
 }
 
 // Nodemailer Transporter Setup
@@ -29,7 +29,7 @@ async function startWorker() {
     try {
         const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
         
-        console.log('⏳ Connecting worker to CloudAMQP Broker...');
+        console.log('[INFO] Connecting worker process to AMQP Broker...');
         const connection = await amqp.connect(RABBITMQ_URL);
         const channel = await connection.createChannel();
 
@@ -49,12 +49,12 @@ async function startWorker() {
         });
 
         channel.prefetch(1);
-        console.log('🚀 Resilient Worker with DLQ Active & Listening!');
+        console.log('[INFO] Worker process active and listening for incoming queue tasks...');
 
         channel.consume(MAIN_QUEUE, async (msg) => {
             if (msg !== null) {
                 const messageContent = JSON.parse(msg.content.toString());
-                console.log(`\n📥 [MESSAGE RECEIVED]:`, messageContent);
+                console.log(`[INFO] Processing payload:`, messageContent);
 
                 const { logId, userId, templateType, email } = messageContent;
 
@@ -65,7 +65,7 @@ async function startWorker() {
                     }
 
                     const recipientEmail = email || 'nikitachitalkar29@gmail.com';
-                    console.log(`📧 Attempting Nodemailer dispatch to: ${recipientEmail}...`);
+                    console.log(`[INFO] Attempting Nodemailer dispatch to recipient: ${recipientEmail}`);
 
                     const mailOptions = {
                         from: `Nexus Notify <${process.env.EMAIL_USER}>`,     
@@ -75,7 +75,7 @@ async function startWorker() {
                     };
 
                     const info = await transporter.sendMail(mailOptions);
-                    console.log('✨ SUCCESS! Email sent via Gmail. ID:', info.messageId);
+                    console.log('[INFO] Email dispatched successfully. Message ID:', info.messageId);
 
                     if (logId) {
                         try {
@@ -85,8 +85,8 @@ async function startWorker() {
                     channel.ack(msg); // Acknowledge success
 
                 } catch (error) {
-                    console.error(`❌ DISPATCH FAILED: ${error.message}`);
-                    console.log(`⚠️ Moving message to Dead Letter Queue (DLQ)...`);
+                    console.error(`[ERROR] Processing failed: ${error.message}`);
+                    console.log(`[WARN] Rejecting message. Routing payload to Dead Letter Queue (DLQ)...`);
                     
                     if (logId) {
                         try {
@@ -101,7 +101,7 @@ async function startWorker() {
         });
 
     } catch (error) {
-        console.error('❌ Worker RabbitMQ Error:', error.message);
+        console.error('[ERROR] Worker connection failure:', error.message);
     }
 }
 
