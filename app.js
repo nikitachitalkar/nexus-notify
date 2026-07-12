@@ -7,6 +7,7 @@ const cors = require('cors');
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
+app.set('trust proxy', 1);
 
 app.use(cors({
     origin: '*', 
