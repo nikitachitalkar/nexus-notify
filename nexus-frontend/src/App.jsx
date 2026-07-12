@@ -4,17 +4,17 @@ import axios from 'axios';
 function App() {
   const [formData, setFormData] = useState({
     userId: 'Nikita',
-    email: 'nikitachitalkar29@gmail.com', // Explicit email field for backend mapping
+    email: 'nikitachitalkar29@gmail.com',
     channel: 'EMAIL',
     templateType: 'WELCOME'
   });
   const [loading, setLoading] = useState(false);
   const [responseStatus, setResponseStatus] = useState(null);
 
-  // Localhost First, with Production Render Fallback
-  const BACKEND_URL = process.env.NODE_ENV === 'production'
-    ? "https://nexus-notify.onrender.com/api/v1/notifications/send"
-    : "http://localhost:5000/api/v1/notifications/send";
+  // Updated with exact Render Web Service API URL
+  const BACKEND_URL = (import.meta.env && import.meta.env.VITE_API_URL) 
+    ? `${import.meta.env.VITE_API_URL}/api/v1/notifications/send`
+    : "https://nexus-notify-api.onrender.com/api/v1/notifications/send";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,7 +29,10 @@ function App() {
         logId: response.data.logId
       });
     } catch (error) {
-      const serverError = error.response?.data?.details || error.response?.data?.error || error.response?.data?.message || 'Failed to connect to backend API server.';
+      const serverError = error.response?.data?.details || 
+                          error.response?.data?.error || 
+                          error.response?.data?.message || 
+                          'Failed to connect to backend API server.';
       
       setResponseStatus({
         success: false,
@@ -48,7 +51,7 @@ function App() {
       fontFamily: 'sans-serif',
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'center',
+      justify: 'center',
       padding: '20px',
       boxSizing: 'border-box'
     }}>
@@ -187,7 +190,7 @@ function App() {
             border: responseStatus.success ? '1px solid rgba(34, 197, 94, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)',
           }}>
             <p style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: responseStatus.success ? '#22c55e' : '#ef4444' }}>
-              {responseStatus.success ? ' Request Accepted' : 'Pipeline Status'}
+              {responseStatus.success ? 'Request Accepted' : 'Pipeline Status'}
             </p>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#e4e4e7', fontWeight: '500' }}>
               {responseStatus.message}
