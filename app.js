@@ -1,14 +1,13 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const amqp = require('amqplib');
-const { createClient } = require('redis');
 const { rateLimit } = require('express-rate-limit');
 const cors = require('cors'); 
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 
-// 🚀 1. CORS Headers globally enable kiye (Automatically handles Pre-flight OPTIONS)
 app.use(cors({
     origin: '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -18,16 +17,16 @@ app.use(cors({
 
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000; 
+const PORT = process.env.PORT || 5000; 
 let rabbitChannel = null;
 
-const DLX_EXCHANGE = 'notification_dlx_v3';
-const RETRY_QUEUE = 'retry_queue_v3';
-const MAIN_QUEUE = 'notifications_v3_queue';
+// Topology Config
+const DLX_EXCHANGE = 'notification_dlx_v5';
+const DLQ_FINAL = 'dead_letter_queue_v5';
+const MAIN_QUEUE = 'notifications_v5_queue';
 
-// 2. Safe Localized Memory-Based Rate Limiter (No External Database Dependency to Crash)
 const apiLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
+    windowMs: 1 * 60 * 1000,
     max: 10000, 
     standardHeaders: true, 
     legacyHeaders: false,
@@ -39,60 +38,56 @@ const apiLimiter = rateLimit({
     }
 });
 
-// 3. Connect to MongoDB (Bulletproof Timeout Config)
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI, {
     serverSelectionTimeoutMS: 4000 
 })
   .then(() => console.log('✅ MongoDB Connected Successfully!'))
-  .catch((err) => console.error('⚠️ MongoDB bypass kiya (Cloud Connection Offline):', err.message));
+  .catch((err) => console.error('⚠️ MongoDB bypass (Cloud Offline):', err.message));
 
-// 4. Connect to RabbitMQ Safely
 async function initRabbitMQ() {
     const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://127.0.0.1:5672';
     try {
         console.log(`⏳ Connecting to RabbitMQ...`);
         const connection = await amqp.connect(RABBITMQ_URL); 
         rabbitChannel = await connection.createChannel();
-
+            
+        // 1. Setup DLX
         await rabbitChannel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
-        await rabbitChannel.assertQueue(RETRY_QUEUE, {
-            durable: true,
-            arguments: {
-                'x-dead-letter-exchange': '',
-                'x-dead-letter-routing-key': MAIN_QUEUE,
-                'x-message-ttl': 5000
-            }
-        });
+        
+        // 2. Setup Final DLQ
+        await rabbitChannel.assertQueue(DLQ_FINAL, { durable: true });
+        
+        // 3. Setup Main Queue linked with DLX
         await rabbitChannel.assertQueue(MAIN_QUEUE, {
             durable: true,
             arguments: {
                 'x-dead-letter-exchange': DLX_EXCHANGE,
-                'x-dead-letter-routing-key': RETRY_QUEUE
+                'x-dead-letter-routing-key': DLQ_FINAL
             }
         });
-        await rabbitChannel.bindQueue(RETRY_QUEUE, DLX_EXCHANGE, RETRY_QUEUE);
-        console.log('✅ RabbitMQ Topologies Initialized!');
+        
+        // 4. Bind DLQ to DLX
+        await rabbitChannel.bindQueue(DLQ_FINAL, DLX_EXCHANGE, DLQ_FINAL);
+
+        console.log('✅ RabbitMQ Topologies Initialized Successfully!');
     } catch (error) {
-        console.error(`⚠️ RabbitMQ Setup Bypassed cleanly: ${error.message}`);
+        console.error(`⚠️ RabbitMQ Setup Error: ${error.message}`);
     }
 }
 
-// Dummy Route for Render Health Check - Fix for Express v5 Wildcard Engine
 app.get('/', (req, res) => {
     res.send('🚀 Resilient Nexus Notify Server is Live and Running!');
 });
 
-// 5. Main POST API Endpoint
 app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     try {
-        const { userId, channel, templateType } = req.body;
+        const { userId, channel, templateType, email } = req.body;
 
         if (!userId || !channel || !templateType) {
             return res.status(400).json({ error: 'Missing mandatory fields' });
         }
 
-        // Production isolated handling: Database connection missing rule
         if (mongoose.connection.readyState !== 1) {
             return res.status(503).json({ error: 'Database service is currently unavailable offline.' });
         }
@@ -104,7 +99,8 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
             status: 'PENDING'
         });
 
-        const messagePayload = { logId: logEntry._id, userId, channel, templateType };
+        // Dynamic email payload passed forward
+        const messagePayload = { logId: logEntry._id, userId, channel, templateType, email };
 
         if (rabbitChannel) {
             rabbitChannel.sendToQueue(MAIN_QUEUE, Buffer.from(JSON.stringify(messagePayload)), {
@@ -124,21 +120,18 @@ app.post('/api/v1/notifications/send', apiLimiter, async (req, res) => {
     }
 });
 
-// Server Boot Sequence
 async function startServer() {
     app.listen(PORT, () => {
-        console.log(`🚀 Resilient Server successfully running on port ${PORT}`);
+        console.log(`🚀 Resilient Server running on port ${PORT}`);
     });
     
-    // RabbitMQ initialization safely in separate execution thread
     await initRabbitMQ();
 
-    // 🔥 SMART HACK: Trigger worker logic internally inside the same Free Instance process!
     try {
-        console.log('🔄 Booting background worker processor threads internally...');
-        require('./worker.js');
+        console.log('🔄 Booting background worker processor internally...');
+        //require('./worker.js');
     } catch (workerInitError) {
-        console.error('⚠️ Monolithic Worker bootup failed:', workerInitError.message);
+        console.error('⚠️ Worker bootup failed:', workerInitError.message);
     }
 }
 

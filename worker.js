@@ -1,27 +1,22 @@
 require('dotenv').config();
-const express = require('express'); // Render stability ke liye zaroori hai
 const amqp = require('amqplib');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const NotificationLog = require('./models/NotificationLog');
 
-// Dummy HTTP Server setup taaki Render port crash error na de
-const app = express();
-const PORT = process.env.PORT || 10000;
-app.get('/', (req, res) => res.send('Distributed Worker Engine running seamlessly...'));
-app.listen(PORT, () => console.log(`Worker monitoring system active on port ${PORT}`));
+// Queue & Exchange Config
+const MAIN_QUEUE = 'notifications_v5_queue'; 
+const DLX_EXCHANGE = 'notification_dlx_v5';
+const DLQ_FINAL = 'dead_letter_queue_v5';
 
-const MAIN_QUEUE = 'notifications_v3_queue'; 
-const DLX_EXCHANGE = 'notification_dlx_v3';
-const RETRY_QUEUE = 'retry_queue_v3';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/nexus_db';
+if (mongoose.connection.readyState === 0) {
+    mongoose.connect(MONGO_URI)
+      .then(() => console.log('📦 Worker Connected to MongoDB!'))
+      .catch(() => console.log('ℹ️ Worker running in DB-bypass mode'));
+}
 
-// 1. Database Connection (Secured using environment variable)
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('📦 Worker Connected to MongoDB!'))
-  .catch((err) => console.error('❌ Worker DB Connection Error:', err));
-
-// 2. Nodemailer Transporter Configuration (Ab credentials environment variables mein hain)
+// Nodemailer Transporter Setup
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -32,90 +27,81 @@ const transporter = nodemailer.createTransport({
 
 async function startWorker() {
     try {
-        // 🔥 Live CloudAMQP Broker Connection URL (Secured via process.env)
         const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
         
-        console.log('⏳ Connecting distributed worker to CloudAMQP Broker...');
+        console.log('⏳ Connecting worker to CloudAMQP Broker...');
         const connection = await amqp.connect(RABBITMQ_URL);
         const channel = await connection.createChannel();
-        
-        // Asserting exact topology configurations (DLX Architecture intact)
+
+        // 1. Setup DLX (Dead Letter Exchange)
         await channel.assertExchange(DLX_EXCHANGE, 'direct', { durable: true });
+
+        // 2. Setup Final DLQ
+        await channel.assertQueue(DLQ_FINAL, { durable: true });
+
+        // 3. Setup Main Notification Queue linked with DLX
         await channel.assertQueue(MAIN_QUEUE, {
             durable: true,
             arguments: {
                 'x-dead-letter-exchange': DLX_EXCHANGE,
-                'x-dead-letter-routing-key': RETRY_QUEUE
+                'x-dead-letter-routing-key': DLQ_FINAL
             }
         });
-        
-        channel.prefetch(1);
-        console.log('🚀 Worker is active and listening directly to CloudAMQP!');
 
-        // 3. Process Messages From The Queue
+        channel.prefetch(1);
+        console.log('🚀 Resilient Worker with DLQ Active & Listening!');
+
         channel.consume(MAIN_QUEUE, async (msg) => {
             if (msg !== null) {
                 const messageContent = JSON.parse(msg.content.toString());
-                console.log(`\n📥 Received message for processing:`, messageContent);
+                console.log(`\n📥 [MESSAGE RECEIVED]:`, messageContent);
 
-                const { logId, userId, channel: msgChannel, templateType } = messageContent;
+                const { logId, userId, templateType, email } = messageContent;
 
                 try {
-                    if (msgChannel && msgChannel.toUpperCase() === 'EMAIL') {
-                        console.log(`📧 Dispatching email to ${userId}...`);
-
-                        // Dynamic Recipient Email routing fallback setup
-                        const recipientEmail = messageContent.email || 'nikitachitalkar29@gmail.com';
-
-                        const mailOptions = {
-                            from: process.env.EMAIL_USER,     
-                            to: recipientEmail,       
-                            subject: `NexusNotify - ${templateType}`,
-                            text: `Hello ${userId},\n\nYour notification for ${templateType} has been processed successfully via Nexus Distributed System Design!\n\nBest Regards,\nNikita`
-                        };
-
-                        const info = await transporter.sendMail(mailOptions);
-                        console.log('✨ Email sent successfully! MessageId:', info.messageId);
-                    } else {
-                        console.log(`ℹ️ Task received for non-email channel [${msgChannel}], logging success internally.`);
+                    // Simulate Failure Test Check
+                    if (email === 'fail@test.com') {
+                        throw new Error("Simulated Bad Request / Invalid Recipient");
                     }
 
-                    // Acknowledge message on absolute success
-                    try {
-                        await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
-                        console.log(`✅ Successfully processed ${templateType}. DB Status Updated.`);
-                    } catch (dbErr) {
-                        console.log(`⚠️ DB Log update bypassed: ${dbErr.message}`);
+                    const recipientEmail = email || 'nikitachitalkar29@gmail.com';
+                    console.log(`📧 Attempting Nodemailer dispatch to: ${recipientEmail}...`);
+
+                    const mailOptions = {
+                        from: `Nexus Notify <${process.env.EMAIL_USER}>`,     
+                        to: recipientEmail,       
+                        subject: `NexusNotify Alert - ${templateType}`,
+                        text: `Hello ${userId},\n\nYour notification for [${templateType}] was processed successfully.\n\nBest Regards,\nNexus Architecture`
+                    };
+
+                    const info = await transporter.sendMail(mailOptions);
+                    console.log('✨ SUCCESS! Email sent via Gmail. ID:', info.messageId);
+
+                    if (logId) {
+                        try {
+                            await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
+                        } catch (dbErr) {}
                     }
-                    channel.ack(msg);
+                    channel.ack(msg); // Acknowledge success
 
                 } catch (error) {
-                    console.error(`❌ Processing Error inside Nodemailer: ${error.message}`);
-
-                    const deathHeader = msg.properties.headers && msg.properties.headers['x-death'];
-                    const retryCount = deathHeader ? deathHeader[0].count : 0;
-
-                    console.log(`⚠️ Current Retry Count: ${retryCount}`);
-
-                    if (retryCount < 3) {
-                        console.log(`🔄 Under retry limit. Dropping to Retry Queue for a 5-second cooldown...`);
-                        channel.nack(msg, false, false); 
-                    } else {
-                        console.log(`🚫 Max retries reached. Marking message as FAILED.`);
+                    console.error(`❌ DISPATCH FAILED: ${error.message}`);
+                    console.log(`⚠️ Moving message to Dead Letter Queue (DLQ)...`);
+                    
+                    if (logId) {
                         try {
-                            await NotificationLog.findByIdAndUpdate(logId, {
-                                status: 'FAILED',
-                                errorMessage: `Max retries exhausted. Original error: ${error.message}`
-                            });
+                            await NotificationLog.findByIdAndUpdate(logId, { status: 'FAILED_DLQ' });
                         } catch (dbErr) {}
-                        channel.ack(msg); 
                     }
+
+                    // Reject message without requeue -> CloudAMQP routes it directly to DLQ
+                    channel.nack(msg, false, false);
                 }
             }
         });
 
     } catch (error) {
-        console.error('❌ Worker RabbitMQ Connection Error:', error.message);
+        console.error('❌ Worker RabbitMQ Error:', error.message);
     }
 }
 

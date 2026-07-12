@@ -3,15 +3,18 @@ import axios from 'axios';
 
 function App() {
   const [formData, setFormData] = useState({
-    userId: '',
+    userId: 'Nikita',
+    email: 'nikitachitalkar29@gmail.com', // Explicit email field for backend mapping
     channel: 'EMAIL',
     templateType: 'WELCOME'
   });
   const [loading, setLoading] = useState(false);
   const [responseStatus, setResponseStatus] = useState(null);
 
-  // 🔥 Aapka Live Render Backend Link
-  const BACKEND_URL = "https://nexus-notify.onrender.com/api/v1/notifications/send";
+  // 🚀 Localhost First, with Production Render Fallback
+  const BACKEND_URL = process.env.NODE_ENV === 'production'
+    ? "https://nexus-notify.onrender.com/api/v1/notifications/send"
+    : "http://localhost:5000/api/v1/notifications/send";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,8 +29,7 @@ function App() {
         logId: response.data.logId
       });
     } catch (error) {
-      // 🛠️ FIX: Agar backend 500 response bhejta hai, toh uske andar ka asali custom error extract karega
-      const serverError = error.response?.data?.details || error.response?.data?.error || error.response?.data?.message || 'Failed to connect to production backend.';
+      const serverError = error.response?.data?.details || error.response?.data?.error || error.response?.data?.message || 'Failed to connect to backend API server.';
       
       setResponseStatus({
         success: false,
@@ -65,19 +67,39 @@ function App() {
           <h2 style={{ margin: 0, fontSize: '24px', fontWeight: '700', color: '#fff' }}>
             Nexus <span style={{ color: '#deff9a' }}>Notify</span>
           </h2>
-          <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#8a8a93' }}>Control Panel • Production Mode</p>
+          <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#8a8a93' }}>Control Panel • Active Mode</p>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '14px', color: '#fff', fontWeight: '500' }}>User ID</label>
+            <label style={{ fontSize: '14px', color: '#fff', fontWeight: '500' }}>User ID / Name</label>
             <input 
               type="text" 
               value={formData.userId}
               onChange={(e) => setFormData({ ...formData, userId: e.target.value })}
-              placeholder="e.g., name9@gmail.com"
+              placeholder="e.g., Nikita"
+              required
+              style={{
+                background: '#1a1a1e',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '8px',
+                padding: '12px',
+                color: '#fff',
+                fontSize: '15px',
+                outline: 'none'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <label style={{ fontSize: '14px', color: '#fff', fontWeight: '500' }}>Recipient Email</label>
+            <input 
+              type="email" 
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              placeholder="e.g., nikitachitalkar29@gmail.com"
               required
               style={{
                 background: '#1a1a1e',
