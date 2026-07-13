@@ -42,7 +42,7 @@ async function initRabbitMQ() {
     console.log('[INFO] RabbitMQ initialized.');
 }
 
-// WORKER LOGIC MERGED HERE
+
 async function startWorker() {
     console.log('[INFO] Worker active and listening...');
     rabbitChannel.prefetch(1);
@@ -55,10 +55,10 @@ async function startWorker() {
                 console.log('[INFO] Email sent successfully.');
                 if (logId) await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
                 rabbitChannel.ack(msg);
-            } catch (error) {
-                console.error('[ERROR] Processing failed:', error.message);
-                rabbitChannel.nack(msg, false, false);
-            }
+           } catch (error) {
+           console.error('[ERROR] Detailed Error:', error); // 'error.message' ki jagah sirf 'error' likho
+           rabbitChannel.nack(msg, false, false);
+          }
         }
     });
 }
