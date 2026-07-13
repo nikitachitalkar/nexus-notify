@@ -106,3 +106,4 @@ async function startWorker() {
 }
 
 startWorker();
+module.exports = { startWorker };
