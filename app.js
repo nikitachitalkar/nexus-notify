@@ -2,13 +2,15 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const amqp = require('amqplib');
-const nodemailer = require('nodemailer'); 
+const { Resend } = require('resend');
 const { rateLimit } = require('express-rate-limit');
 const cors = require('cors'); 
 const NotificationLog = require('./models/NotificationLog');
 
 const app = express();
 app.set('trust proxy', 1);
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'], credentials: true }));
 app.use(express.json());
@@ -19,17 +21,6 @@ let rabbitChannel = null;
 const MAIN_QUEUE = 'notifications_v5_queue'; 
 const DLX_EXCHANGE = 'notification_dlx_v5';
 const DLQ_FINAL = 'dead_letter_queue_v5';
-
-// UPDATED NODEMAILER SETUP (Fixed ENETUNREACH issue)
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // true for 465
-    auth: { 
-        user: process.env.EMAIL_USER, 
-        pass: process.env.EMAIL_PASS 
-    }
-});
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus_db';
 mongoose.connect(MONGO_URI).then(() => console.log('[INFO] MongoDB connected.')).catch(err => console.error(err.message));
@@ -52,18 +43,17 @@ async function startWorker() {
         if (msg !== null) {
             const { logId, userId, templateType, email } = JSON.parse(msg.content.toString());
             try {
-                const mailOptions = { 
-                    from: process.env.EMAIL_USER, 
-                    to: email || 'nikitachitalkar29@gmail.com', 
-                    subject: `Alert: ${templateType}`, 
-                    text: `Hello ${userId}, your notification is ready.` 
-                };
-                await transporter.sendMail(mailOptions);
-                console.log('[INFO] Email sent successfully.');
+                await resend.emails.send({
+                    from: 'onboarding@resend.dev',
+                    to: email || 'nikitachitalkar29@gmail.com',
+                    subject: `Alert: ${templateType}`,
+                    html: `<p>Hello ${userId}, your notification for [${templateType}] was processed successfully.</p>`
+                });
+                console.log('[INFO] Email sent successfully via Resend API.');
                 if (logId) await NotificationLog.findByIdAndUpdate(logId, { status: 'SUCCESS' });
                 rabbitChannel.ack(msg);
             } catch (error) {
-                console.error('[ERROR] SMTP Connection Error:', error);
+                console.error('[ERROR] Resend API Error:', error);
                 rabbitChannel.nack(msg, false, false);
             }
         }
